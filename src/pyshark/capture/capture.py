@@ -1,4 +1,6 @@
 import asyncio
+import contextlib
+import inspect
 import os
 import threading
 import subprocess
@@ -26,7 +28,7 @@ class TSharkCrashException(Exception):
     pass
 
 
-class UnknownEncyptionStandardException(Exception):
+class UnknownEncryptionStandardException(Exception):
     pass
 
 
@@ -90,7 +92,7 @@ class Capture:
             self.encryption = (decryption_key, encryption_type.lower())
         else:
             standards = ", ".join(self.SUPPORTED_ENCRYPTION_STANDARDS)
-            raise UnknownEncyptionStandardException(f"Only the following standards are supported: {standards}.")
+            raise UnknownEncryptionStandardException(f"Only the following standards are supported: {standards}.")
 
     def __getitem__(self, item):
         """Gets the packet in the given index.
@@ -291,7 +293,10 @@ class Capture:
             if packet:
                 packets_captured += 1
                 try:
-                    packet_callback(packet)
+                    if inspect.iscoroutinefunction(packet_callback):
+                        await packet_callback(packet)
+                    else:
+                        packet_callback(packet)
                 except StopCapture:
                     self._log.debug("User-initiated capture stop in callback")
                     break
@@ -398,7 +403,10 @@ class Capture:
         self._running_processes.clear()
 
         # Wait for all stderr handling to finish
-        await asyncio.gather(*self._stderr_handling_tasks)
+        for task in self._stderr_handling_tasks:
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
 
     def __del__(self):
         if self._running_processes:
